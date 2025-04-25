@@ -55,6 +55,8 @@ The goal is to provide a nostalgic yet functional desktop environment that runs 
 - **Context Menus**: Right-click context menus throughout the interface (Desktop background, Desktop icons, File Manager background, File Manager items, Links).
 - **File Dialogs**: Generic file open/save dialogs, create/edit link dialogs.
 - **Error Handling**: Basic visual error dialogs for common operations.
+- **System Preferences**: Application to manage system-wide settings like Dock appearance and behavior.
+- **Settings Persistence**: User settings are saved in the browser's localStorage.
 
 ## Technical Architecture
 
@@ -75,6 +77,7 @@ The architecture uses context-based state management for global systems and loca
 - `FileSystemContext`: Provides access to core, stateless virtual file system operations.
 - `DialogContext`: Manages dialog display and interaction (File Open/Save, Create/Edit Link, Error).
 - `ContextMenuContext`: Handles right-click context menus.
+- `SettingsContext`: Manages global user settings and persistence.
 
 ## Core Systems
 
@@ -204,6 +207,29 @@ const handleContextMenu = (e: React.MouseEvent) => {
 };
 ```
 
+### Settings System
+
+A global settings system, managed by `SettingsProvider` in `lib/settings/settings-context.tsx`, allows components to access and modify user preferences. Settings are persisted to `localStorage`.
+
+- **Structure**: Settings are organized hierarchically (e.g., `dock.magnification`, `general.clickBehavior`).
+- **Persistence**: Automatically saved to and loaded from `localStorage`.
+- **Access**: Components use the `useSettings` hook to read settings and the `updateSetting` function to modify them.
+- **Management**: The "System Preferences" application provides a UI for users to change these settings.
+
+Example usage (in a component like Dock):
+
+```typescript
+import { useSettings } from '@/lib/settings/settings-context';
+
+const { settings, updateSetting } = useSettings();
+
+// Read a setting
+const isMagnificationEnabled = settings.dock.magnification;
+
+// Update a setting
+updateSetting('dock', 'autoHide', true);
+```
+
 ### App Management
 
 The app management system is implemented in `components/app-context.tsx` and provides:
@@ -248,8 +274,8 @@ The project includes several key UI components:
 - **File Manager** (`components/apps/file-manager.tsx`): File browser application (with local state).
     - Includes toolbar, editable path bar, sidebar, and content area (icon/list views).
     - Handles navigation, item selection, creation, and renaming.
-- **TextEdit** (`components/apps/notepad.tsx`): Text editor application.
-- **Browser** (`components/apps/browser.tsx`): Simple web browser application.
+- **TextEdit** (`components/apps/notepad.tsx`): Simple text editor application.
+- **Browser** (`components/apps/browser.tsx`): Simple web browser application capable of rendering external websites and local HTML files from the virtual file system (`file:///` protocol).
 - **DropdownMenu** (`components/dropdown-menu.tsx`): Menu component for application menus (used by Menu Bar).
 - **Dialogs** (`components/dialogs/`):
   - `FileOpenDialog`
@@ -257,6 +283,8 @@ The project includes several key UI components:
   - `CreateLinkDialog`
   - `EditLinkDialog`
   - `ErrorDialog`
+- **System Preferences** (`components/apps/system-preferences.tsx`): Application for managing system settings.
+  - Contains panes for different setting categories (e.g., Dock, Desktop).
 
 ## Development Guide
 
@@ -316,6 +344,7 @@ To add a new application:
 2. Register the application by adding an `AppInfo` object to the `DEFAULT_APPS` array in `components/app-context.tsx`.
    - This will automatically create a `.lnk` file for your app in the `/Applications` directory when the file system is initialized for the first time.
 3. Ensure the main `renderComponent` function in `components/window.tsx` includes a case to render your new app component.
+4. If your application needs to interact with global settings, use the `useSettings` hook from `lib/settings/settings-context.tsx`.
 
 ```typescript
 // In components/app-context.tsx
@@ -325,13 +354,23 @@ export const DEFAULT_APPS: AppInfo[] = [
     id: "myapp",
     name: "My App",
     icon: <MyIcon className="w-full h-full text-purple-500" />,
-    component: "MyApp",
+    component: "MyApp", // Used in window.tsx switch case
     defaultSize: { width: 600, height: 400 },
+  },
+  // Example: System Preferences registration
+  {
+    id: "systempreferences",
+    name: "System Preferences",
+    icon: <Settings className="w-full h-full text-gray-600" />,
+    component: "SystemPreferences",
+    defaultSize: { width: 650, height: 450 },
+    defaultProps: {},
   },
 ];
 
 // Then create the component in components/apps/my-app.tsx
-// And add it to the renderComponent function in components/window.tsx
+// Add 'MyApp' to the renderComponent function in components/window.tsx
+// Use useSettings() inside MyApp if needed.
 ```
 
 ### Extending the File System
@@ -364,7 +403,7 @@ The file system can be extended by:
 - File search functionality
 - Image viewer application
 - Terminal application
-- User preferences and settings
+- User preferences and settings (partially implemented via System Preferences)
 - Multiple desktops/spaces
 - More realistic browser with tabs
 - File import/export with real file system

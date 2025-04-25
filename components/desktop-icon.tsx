@@ -4,8 +4,11 @@ import React, { useRef, useEffect } from "react"
 import { motion, type PanInfo } from "framer-motion"
 import type { FileSystemEntity, Link } from "@/lib/file-system/types"
 import { useApp } from "@/components/app-context"
-import { useContextMenu } from "@/components/context-menu-provider"
+import { useContextMenu, type MenuItem } from "@/components/context-menu-provider"
 import { FileText, FolderOpen, Database, Globe, Link as LinkIcon } from "lucide-react"
+import { useFileSystem } from "@/lib/file-system/file-system-context"
+import { useDialog } from "@/components/dialogs/dialog-context"
+import { useFileOpener } from "@/lib/hooks/useFileOpener"
 
 interface DesktopIconProps {
   entity: FileSystemEntity
@@ -77,8 +80,11 @@ export default function DesktopIcon({
     onCancelRename,
     onStartRename
 }: DesktopIconProps) {
-  const { getAppById } = useApp()
+  const { getAppById, getAppsForExtension } = useApp()
   const { showContextMenu } = useContextMenu()
+  const { deleteEntity } = useFileSystem()
+  const { showErrorDialog } = useDialog()
+  const { openEntity } = useFileOpener()
   const inputRef = useRef<HTMLInputElement>(null); // Ref for the input field
 
   // Focus and select text when renaming starts
@@ -99,14 +105,50 @@ export default function DesktopIcon({
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation(); // Prevent desktop context menu from showing
-    showContextMenu(e, [
-      { label: "Open", action: () => onDoubleClick(entity) },
-      { separator: true },
-      { label: "Rename", action: () => onStartRename(entity) },
-      { label: "Get Info", action: () => console.log("TODO: Get Info for", entity.id) },
-      { separator: true },
-      { label: "Delete", action: () => console.log("TODO: Delete", entity.id) }, // Needs implementation
-    ]);
+
+    // --- Build Menu Items Dynamically ---
+    const menuItems: MenuItem[] = [
+        { label: "Open", action: () => openEntity(entity) }, // Use hook
+    ];
+
+    // Add "Open With..." submenu for files
+    if (entity.type === 'file') {
+        const applicableApps = getAppsForExtension(entity.name);
+        if (applicableApps.length > 1) { // Only show if more than one app applies
+             menuItems.push({ separator: true });
+             menuItems.push({
+                 label: "Open With",
+                 submenu: applicableApps.map(app => ({
+                     label: app.name,
+                     // Use openEntity with the specific app ID
+                     action: () => openEntity(entity, app.id) 
+                 }))
+             });
+        }
+    }
+
+    // Add standard items
+    menuItems.push({ separator: true });
+    menuItems.push({ label: "Rename", action: () => onStartRename(entity) });
+    menuItems.push({ label: "Get Info", action: () => console.log("TODO: Get Info for", entity.id) });
+    menuItems.push({ separator: true });
+    menuItems.push({
+        label: "Delete",
+        action: async () => {
+            console.log("Attempting to delete:", entity.name);
+            try {
+                const result = await deleteEntity(entity.id);
+                if (!result.success) {
+                    showErrorDialog(result.error || "Failed to delete item.");
+                }
+                // Desktop will auto-refresh due to fsVersion change
+            } catch (error) {
+                 showErrorDialog(`Error deleting item: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+    });
+
+    showContextMenu(e, menuItems);
   };
 
   // Handle keydown in input field

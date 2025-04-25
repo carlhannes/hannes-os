@@ -10,6 +10,7 @@ import type { FileSystemEntity, Link, LinkTargetType } from "@/lib/file-system/t
 import { useWindow } from "@/components/window-context"
 import { useApp } from "@/components/app-context"
 import { useDialog } from "@/components/dialogs/dialog-context"
+import { useFileOpener } from "@/lib/hooks/useFileOpener"
 
 interface FileManagerProps {
   initialPath?: string
@@ -34,8 +35,9 @@ export default function FileManager({ initialPath = "/" }: FileManagerProps) {
 
   const { openWindow } = useWindow();
   const { showContextMenu } = useContextMenu();
-  const { apps, getAppById } = useApp();
+  const { apps, getAppById, getAppsForExtension } = useApp();
   const { showCreateLinkDialog, showEditLinkDialog, showErrorDialog } = useDialog();
+  const { openEntity } = useFileOpener();
 
   // Local state for this FileManager instance's view
   const [currentPath, setCurrentPath] = useState(initialPath);
@@ -152,94 +154,6 @@ export default function FileManager({ initialPath = "/" }: FileManagerProps) {
     setSelectedItem(item);
   };
 
-  const handleItemDoubleClick = async (item: FileSystemEntity) => {
-    if (renamingItemId === item.id) return;
-    if (item.type === "directory") {
-      const targetPath = `${currentPath === "/" ? "" : currentPath}/${item.name}`;
-      navigateTo(targetPath);
-    } else if (item.type === "file") {
-      console.log(`[FileManager] Opening file: ${item.name} (ID: ${item.id})`);
-      openWindow({
-        title: "TextEdit",
-        subtitle: item.name,
-        icon: "Notepad",
-        component: "Notepad",
-        position: {
-          x: Math.max(50, Math.random() * 100),
-          y: Math.max(50, Math.random() * 100),
-          width: 500,
-          height: 400,
-        },
-        props: { fileId: item.id },
-      });
-    } else if (item.type === "link") {
-      const link = item as Link;
-      switch (link.targetType) {
-        case "application":
-          const appInfo = getAppById(link.target);
-          if (appInfo) {
-            console.log(`[FileManager] Opening application via link: ${appInfo.name}`);
-            openWindow({
-              title: appInfo.name,
-              icon: appInfo.id,
-              component: appInfo.component,
-              position: { ...appInfo.defaultSize, x: 50, y: 50 },
-              props: {},
-            });
-          } else {
-            console.error(`[FileManager] App not found for link target: ${link.target}`);
-          }
-          break;
-        case "directory":
-          const targetPath = await getPath(link.target);
-          if (targetPath) {
-            console.log(`[FileManager] Navigating to directory via link: ${targetPath}`);
-            navigateTo(targetPath);
-          } else {
-            console.error(`[FileManager] Could not resolve path for directory link target: ${link.target}`);
-          }
-          break;
-        case "file":
-          console.log(`[FileManager] Opening file via link, target ID: ${link.target}`);
-          openWindow({
-            title: "TextEdit",
-            subtitle: link.name.replace(".lnk", ""),
-            icon: "Notepad",
-            component: "Notepad",
-            position: {
-              x: Math.max(50, Math.random() * 100),
-              y: Math.max(50, Math.random() * 100),
-              width: 500,
-              height: 400,
-            },
-            props: { fileId: link.target },
-          });
-          break;
-        case "url":
-          console.log(`[FileManager] Opening URL via link: ${link.target}`);
-          openWindow({
-            title: "Browser",
-            subtitle: link.target,
-            icon: "Browser",
-            component: "Browser",
-            position: {
-              x: Math.max(50, Math.random() * 100),
-              y: Math.max(50, Math.random() * 100),
-              width: 800,
-              height: 600,
-            },
-            props: { initialUrl: link.target },
-          });
-          break;
-        default:
-          console.warn(`[FileManager] Unknown link target type: ${link.targetType}`);
-      }
-    } else if (item.type === "application") {
-      console.log("Opening application (legacy type):", item.name);
-    }
-  };
-
-  // --- Rename Handlers ---
   const handleStartRename = useCallback((item: FileSystemEntity) => {
     setIsCreatingNew(false);
     setNewItemName("");
@@ -313,52 +227,74 @@ export default function FileManager({ initialPath = "/" }: FileManagerProps) {
         setIsCreatingNew(false);
     }
 
-    const menuItems: MenuItem[] = [
-      ...(item
-        ? [
-            { label: "Open", action: () => item && handleItemDoubleClick(item) },
-            { label: "Rename", action: () => item && handleStartRename(item) },
-            { separator: true as const },
-            ...(item.type === 'link' ? [
-               { label: "Edit Link...", action: () => handleEditLink(item as Link) },
-               { separator: true as const },
-            ] : []),
-            { label: "Delete", action: () => { fsDeleteEntity(item!.id).then(refreshView); } },
-          ]
-        : []),
-      ...(!item ? [{ separator: true as const }] : []),
-      {
-        label: "New File",
-        action: () => {
-          handleCancelRename();
-          setNewItemType("file")
-          setNewItemName("Untitled.txt")
-          setIsCreatingNew(true)
-        },
-      },
-      {
-        label: "New Folder",
-        action: () => {
-          handleCancelRename();
-          setNewItemType("directory")
-          setNewItemName("Untitled Folder")
-          setIsCreatingNew(true)
-        },
-      },
-      { separator: true as const },
-      {
-        label: "New Link...",
-        submenu: [
-          { label: "Application Link...", action: () => handleCreateLink('application') },
-          { label: "Folder Link...", action: () => handleCreateLink('directory') },
-          { label: "File Link...", action: () => handleCreateLink('file') },
-          { label: "URL Link...", action: () => handleCreateLink('url') },
-        ],
-      },
-      { separator: true as const },
-      { label: "Refresh", action: refreshView },
-    ]
+    // --- Build Menu Items Dynamically ---
+    const menuItems: MenuItem[] = [];
 
+    if (item) {
+        // Standard actions for any item
+        menuItems.push({ label: "Open", action: () => openEntity(item) });
+
+        // Add "Open With..." submenu for files with multiple handlers
+        if (item.type === 'file') {
+            const applicableApps = getAppsForExtension(item.name);
+            if (applicableApps.length > 1) { 
+                 menuItems.push({ separator: true });
+                 menuItems.push({
+                     label: "Open With",
+                     submenu: applicableApps.map(app => ({
+                         label: app.name,
+                         action: () => openEntity(item, app.id) // Pass overrideAppId
+                     }))
+                 });
+            }
+        }
+
+        // Separator before Rename/Edit/Delete
+        menuItems.push({ separator: true });
+
+        if (item.type === 'link') {
+             menuItems.push({ label: "Edit Link...", action: () => handleEditLink(item as Link) });
+             menuItems.push({ separator: true });
+        }
+
+        menuItems.push({ label: "Rename", action: () => handleStartRename(item) });
+        menuItems.push({ label: "Delete", action: () => { fsDeleteEntity(item.id).then(refreshView); } });
+
+    } else {
+        // Background context menu items
+        menuItems.push({
+            label: "New File",
+            action: () => {
+                handleCancelRename();
+                setNewItemType("file")
+                setNewItemName("Untitled.txt")
+                setIsCreatingNew(true)
+            },
+        });
+        menuItems.push({
+            label: "New Folder",
+            action: () => {
+                handleCancelRename();
+                setNewItemType("directory")
+                setNewItemName("Untitled Folder")
+                setIsCreatingNew(true)
+            },
+        });
+        menuItems.push({ separator: true });
+        menuItems.push({
+            label: "New Link...",
+            submenu: [
+                 { label: "Application Link...", action: () => handleCreateLink('application') },
+                 { label: "Folder Link...", action: () => handleCreateLink('directory') },
+                 { label: "File Link...", action: () => handleCreateLink('file') },
+                 { label: "URL Link...", action: () => handleCreateLink('url') },
+            ],
+        });
+        menuItems.push({ separator: true });
+        menuItems.push({ label: "Refresh", action: refreshView });
+    }
+
+    // Filter out consecutive/leading/trailing separators (same logic as before)
     const finalMenuItems = menuItems.filter((menuItem, index, arr) => {
         if (menuItem.separator) {
             if (index === 0 || index === arr.length - 1) return false;
@@ -668,7 +604,14 @@ export default function FileManager({ initialPath = "/" }: FileManagerProps) {
                       selectedItem?.id === item.id ? "bg-blue-200" : "hover:bg-blue-100"
                     }`}
                     onClick={() => handleItemClick(item)}
-                    onDoubleClick={() => handleItemDoubleClick(item)}
+                    onDoubleClick={async () => {
+                      if (item.type === 'directory') {
+                        const path = await getPath(item.id);
+                        if (path) navigateTo(path);
+                      } else {
+                        openEntity(item);
+                      }
+                    }}
                     onContextMenu={(e) => handleContextMenu(e, item)}
                   >
                     <div className="w-12 h-12 mb-1">{getItemIcon(item)}</div>
@@ -699,7 +642,14 @@ export default function FileManager({ initialPath = "/" }: FileManagerProps) {
                     selectedItem?.id === item.id ? "bg-blue-500 text-white" : "hover:bg-gray-100"
                   }`}
                   onClick={() => handleItemClick(item)}
-                  onDoubleClick={() => handleItemDoubleClick(item)}
+                  onDoubleClick={async () => {
+                    if (item.type === 'directory') {
+                      const path = await getPath(item.id);
+                      if (path) navigateTo(path);
+                    } else {
+                      openEntity(item);
+                    }
+                  }}
                   onContextMenu={(e) => handleContextMenu(e, item)}
                 >
                   <div className="relative w-6 h-6 mr-2 flex items-center justify-center">{getItemIcon(item)}</div>

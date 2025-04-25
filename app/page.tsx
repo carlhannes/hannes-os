@@ -24,7 +24,7 @@ function AppContent() {
   const { windows } = useWindow();
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-jaguar-blue select-none">
+    <div className="h-screen w-screen overflow-hidden flex flex-col select-none">
       <MenuBar />
       <Desktop />
       {/* Render windows as siblings to Desktop, inside ContextMenuProvider */}

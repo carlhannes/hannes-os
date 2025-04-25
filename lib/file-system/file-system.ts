@@ -51,7 +51,7 @@ class FileSystem {
 
   // Create a new file system with root directory
   private async createNewFileSystem(): Promise<void> {
-    const rootId = uuidv4()
+    const rootId = uuidv4();
 
     const rootDir: Directory = {
       id: rootId,
@@ -61,81 +61,92 @@ class FileSystem {
       createdAt: Date.now(),
       modifiedAt: Date.now(),
       metadata: {},
-    }
+    };
 
     this.state = {
       entities: { [rootId]: rootDir },
       rootId,
-    }
+    };
 
-    await db.saveEntity(rootDir)
-    await db.saveFileSystemState(this.state)
+    await db.saveEntity(rootDir);
+    // No need to save state immediately, bulk save at the end is fine
 
-    // Create default top-level directories
-    const appsDirResult = await this.createDirectory("Applications", rootId);
-    await this.createDirectory("Users", rootId);
-    await this.createDirectory("System", rootId);
+    // --- Create Default Structure Sequentially --- 
 
-    // Create links in /Applications folder
-    if (appsDirResult.success && appsDirResult.data) {
-      const appsDirId = appsDirResult.data.id;
-      console.log("[FileSystem] Creating app links in:", appsDirId);
-      for (const app of DEFAULT_APPS) {
-        console.log(`[FileSystem] Creating link for ${app.name}`);
-        await this.createLink(
-          app.name, // createLink will add .lnk
-          appsDirId,
-          "application",
-          app.id // Use the app's ID (e.g., 'textedit') as the target
-        );
-      }
-    }
+    let usersDirId: string | undefined;
+    let appsDirId: string | undefined;
+    let userDirId: string | undefined;
+    let desktopDirId: string | undefined;
+    let documentsDirId: string | undefined;
 
-    // Create a user directory
-    const usersDir = await this.getEntityByPath("/Users")
-    if (usersDir && usersDir.type === "directory") {
-      const userDir = await this.createDirectory("User", usersDir.id)
+    try {
+      // Create top-level directories
+      const usersDirResult = await this.createDirectory("Users", rootId);
+      if (!usersDirResult.success || !usersDirResult.data) throw new Error("Failed to create /Users");
+      usersDirId = usersDirResult.data.id;
+
+      const appsDirResult = await this.createDirectory("Applications", rootId);
+      if (!appsDirResult.success || !appsDirResult.data) throw new Error("Failed to create /Applications");
+      appsDirId = appsDirResult.data.id;
+
+      await this.createDirectory("System", rootId); // Don't need its ID for now
+
+      // Create user directory
+      const userDirResult = await this.createDirectory("User", usersDirId);
+      if (!userDirResult.success || !userDirResult.data) throw new Error("Failed to create /Users/User");
+      userDirId = userDirResult.data.id;
 
       // Create user subdirectories
-      if (userDir.success && userDir.data) {
-        const userDirId = userDir.data.id;
-        await this.createDirectory("Documents", userDirId);
-        const desktopDirResult = await this.createDirectory("Desktop", userDirId);
-        await this.createDirectory("Downloads", userDirId);
+      const documentsDirResult = await this.createDirectory("Documents", userDirId);
+      if (!documentsDirResult.success || !documentsDirResult.data) throw new Error("Failed to create /Users/User/Documents");
+      documentsDirId = documentsDirResult.data.id;
 
-        // Also create links to default apps on the Desktop
-        if (desktopDirResult.success && desktopDirResult.data) {
-            const desktopDirId = desktopDirResult.data.id;
-            console.log("[FileSystem] Creating app links on Desktop:", desktopDirId);
-            for (const app of DEFAULT_APPS) {
-                console.log(`[FileSystem] Creating link for ${app.name} on Desktop`);
-                await this.createLink(
-                    app.name, // createLink will add .lnk
-                    desktopDirId,
-                    "application",
-                    app.id // Use the app's ID
-                );
-            }
-        }
+      const desktopDirResult = await this.createDirectory("Desktop", userDirId);
+      if (!desktopDirResult.success || !desktopDirResult.data) throw new Error("Failed to create /Users/User/Desktop");
+      desktopDirId = desktopDirResult.data.id;
+      
+      await this.createDirectory("Downloads", userDirId); // Don't need its ID for now
+
+      // Create links in /Applications folder
+      console.log("[FileSystem] Creating app links in /Applications:", appsDirId);
+      for (const app of DEFAULT_APPS) {
+          console.log(`[FileSystem] Creating link for ${app.name} in /Applications`);
+          await this.createLink(app.name, appsDirId, "application", app.id);
       }
-    }
 
-    // Create some sample files
-    const docsDir = await this.getEntityByPath("/Users/User/Documents")
-    if (docsDir && docsDir.type === "directory") {
-      await this.createFile(
-        "Welcome.txt",
-        docsDir.id,
-        "Welcome to your virtual desktop!\n\nThis is a sample text file that you can edit and save.",
-        "text/plain",
-      )
-      await this.createFile("Notes.txt", docsDir.id, "Your notes go here...", "text/plain")
-      await this.createFile(
-        "Todo.txt",
-        docsDir.id,
-        "- Create virtual file system\n- Implement file editing\n- Add more apps",
-        "text/plain",
-      )
+      // Create links on Desktop
+      console.log("[FileSystem] Creating app links on Desktop:", desktopDirId);
+      for (const app of DEFAULT_APPS) {
+          console.log(`[FileSystem] Creating link for ${app.name} on Desktop`);
+          await this.createLink(app.name, desktopDirId, "application", app.id);
+      }
+      
+      // Create sample files in Documents
+      console.log("[FileSystem] Creating sample files in Documents:", documentsDirId);
+       await this.createFile(
+            "Welcome.txt",
+            documentsDirId,
+            "Welcome to your virtual desktop!\n\nThis is a sample text file that you can edit and save.",
+            "text/plain",
+        );
+        await this.createFile("Notes.txt", documentsDirId, "Your notes go here...", "text/plain");
+        await this.createFile(
+            "Todo.txt",
+            documentsDirId,
+            "- Create virtual file system\n- Implement file editing\n- Add more apps",
+            "text/plain",
+        );
+
+      // Save the complete initial state once at the end
+      await db.saveFileSystemState(this.state);
+      console.log("[FileSystem] New file system created successfully.");
+
+    } catch(error) {
+        console.error("[FileSystem] CRITICAL: Failed during initial file system creation:", error);
+        // If creation fails badly, maybe reset state to just the root?
+        this.state = { entities: { [rootId]: rootDir }, rootId };
+        await db.saveFileSystemState(this.state); // Save minimal state
+        // Rethrow or handle appropriately? For now, log and continue.
     }
   }
 

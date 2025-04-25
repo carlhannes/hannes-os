@@ -3,9 +3,17 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 
 // 1. Define the structure of your settings
+
+// Define the new discriminated union for desktop background settings
+export type DesktopBackgroundSetting =
+  | { type: 'color'; color: string } // e.g., '#RRGGBB' or 'rgba(...)'
+  | { type: 'image'; url: string; fit: 'cover' | 'contain' | 'fill'; filter: string | null } // filter: CSS filter value like 'grayscale(100%)' or 'sepia(80%)'
+  | { type: 'animation'; animationId: 'wave' | 'particles' | 'globe' }; // Add 'globe'
+
 export interface SettingsState {
   desktop: {
-    wallpaper: string; // Example: path or URL to image
+    // wallpaper: string; // Remove or deprecate old setting - Replaced by background object
+    background: DesktopBackgroundSetting;
   };
   dock: {
     autoHide: boolean;
@@ -22,7 +30,9 @@ export interface SettingsState {
 // 2. Define default settings
 const DEFAULT_SETTINGS: SettingsState = {
   desktop: {
-    wallpaper: '/img/wallpapers/jaguar-default.jpg', // Default wallpaper path
+    // Default to the globe animation
+    background: { type: 'animation', animationId: 'globe' }, 
+    // background: { type: 'color', color: '#0d94e4' }, // Old default
   },
   dock: {
     autoHide: false,
@@ -35,9 +45,13 @@ const DEFAULT_SETTINGS: SettingsState = {
 };
 
 // 3. Define the context type
+// Ensure updateSetting type works with the nested background object
 interface SettingsContextType {
   settings: SettingsState;
-  updateSetting: <K extends keyof SettingsState, SK extends keyof SettingsState[K]>(category: K, key: SK, value: SettingsState[K][SK]) => void;
+  // This type needs to handle nested updates correctly.
+  // A simpler approach might be to always update the entire 'background' object.
+  // updateSetting: <K extends keyof SettingsState, SK extends keyof SettingsState[K]>(category: K, key: SK, value: SettingsState[K][SK]) => void;
+  updateSetting: <K extends keyof SettingsState>(category: K, key: keyof SettingsState[K], value: SettingsState[K][keyof SettingsState[K]]) => void;
   resetSettings: () => void;
   isLoading: boolean; // Indicate if settings are being loaded
 }
@@ -59,7 +73,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       if (storedSettings) {
         const parsedSettings = JSON.parse(storedSettings);
         // Basic validation/merge with defaults to handle missing keys after updates
-        setSettings(prev => ({ ...DEFAULT_SETTINGS, ...parsedSettings }));
+        // Deep merge might be needed if structure changes significantly, but for now this should merge top-level keys
+        // and overwrite nested objects like 'desktop' entirely if present in storage.
+        // Let's refine the merge to be slightly safer for nested objects:
+        const mergedSettings: SettingsState = {
+            ...DEFAULT_SETTINGS,
+            ...parsedSettings,
+            // Ensure nested objects also have defaults if missing from storage
+            desktop: { ...DEFAULT_SETTINGS.desktop, ...(parsedSettings.desktop || {}) },
+            dock: { ...DEFAULT_SETTINGS.dock, ...(parsedSettings.dock || {}) },
+            general: { ...DEFAULT_SETTINGS.general, ...(parsedSettings.general || {}) },
+        };
+        setSettings(mergedSettings);
       } else {
         // No stored settings, use defaults
         setSettings(DEFAULT_SETTINGS);
@@ -85,13 +110,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings, isLoading]);
 
   // Function to update a specific setting
-  const updateSetting = useCallback(<K extends keyof SettingsState, SK extends keyof SettingsState[K]>(
+  // Refined updateSetting to handle nested structures more explicitly if needed,
+  // but updating the whole 'background' object is often simpler.
+  const updateSetting = useCallback(<K extends keyof SettingsState>(
     category: K,
-    key: SK,
-    value: SettingsState[K][SK]
+    key: keyof SettingsState[K],
+    value: SettingsState[K][keyof SettingsState[K]]
   ) => {
     setSettings((prevSettings) => {
+      // Create a new object for the category being updated
       const newCategoryState = { ...prevSettings[category], [key]: value };
+      // Return the new top-level state object
       return { ...prevSettings, [category]: newCategoryState };
     });
   }, []);

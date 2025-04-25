@@ -1,327 +1,301 @@
 "use client"
 
-import React, { useState, useEffect, useRef, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
+import { motion } from "framer-motion"
 import DesktopIcon from "@/components/desktop-icon"
 import { useFileSystem } from "@/lib/file-system/file-system-context"
 import type { FileSystemEntity, Link, LinkTargetType } from "@/lib/file-system/types"
 import { useWindow } from "@/components/window-context"
-import { useApp } from "@/components/app-context"
 import { useContextMenu } from "@/components/context-menu-provider"
 import { useDialog } from "@/components/dialogs/dialog-context"
+import { useApp } from "@/components/app-context"
+import { FolderPlus, Link as LinkIcon, Globe, Tv, Star, RefreshCw, Brush } from "lucide-react"
+import { useSettings } from "@/lib/settings/settings-context" 
+import DesktopBackgroundWrapper from "./desktop-background-wrapper" 
+import { useFileOpener } from "@/lib/hooks/useFileOpener"
 
-// Simple debounce function using setTimeout
-function debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
-    let timeout: NodeJS.Timeout | null = null;
-    return function executedFunction(...args: Parameters<T>) {
-        const later = () => {
-            timeout = null;
-            func(...args);
-        };
-        if (timeout) {
-            clearTimeout(timeout);
-        }
-        timeout = setTimeout(later, wait);
-    };
-}
+const GRID_SIZE = 80 // Size of the grid cells for snapping
+const DESKTOP_PATH = "/Users/User/Desktop"; // Define DESKTOP_PATH locally
 
-const DESKTOP_PATH = "/Users/User/Desktop"
+// Helper function to snap to grid
+// ... existing code ...
 
 export default function Desktop() {
   const {
-    initialized,
-    listDirectoryByPath,
-    updateEntityMetadata,
-    getPath,
     getEntityByPath,
-    createLink,
     listDirectory,
-    fsVersion,
-    createDirectory,
+    updateEntityMetadata,
     renameEntity,
+    createDirectory,
+    createLink, // Ensure createLink is imported from useFileSystem
+    getPath,
+    initialized, // Get the initialized state from the context
+    fsVersion,   // Get the file system version
   } = useFileSystem()
   const { openWindow } = useWindow()
   const { showContextMenu } = useContextMenu()
+  const { showCreateLinkDialog, showErrorDialog } = useDialog()
   const { getAppById } = useApp()
-  const { showErrorDialog, showCreateLinkDialog } = useDialog()
+  const { settings } = useSettings() 
+  const { openEntity } = useFileOpener()
 
   const [desktopItems, setDesktopItems] = useState<FileSystemEntity[]>([])
-  const [desktopDirId, setDesktopDirId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const desktopRef = useRef<HTMLDivElement>(null)
+  const [desktopId, setDesktopId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
+  const [renamingItemName, setRenamingItemName] = useState<string>("");
+  const desktopRef = useRef<HTMLDivElement>(null);
+  const draggedItemRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
 
-  // State for inline renaming
-  const [renamingItemId, setRenamingItemId] = useState<string | null>(null)
-  const [renamingItemName, setRenamingItemName] = useState<string>("")
-
-  const refreshDesktopItems = useCallback(async () => {
-    if (!initialized) return
-    setIsLoading(true)
+  // Load desktop items on mount
+  const loadDesktopItems = useCallback(async () => {
+    setIsLoading(true);
     try {
-      console.log(`[Desktop] Refreshing contents for path: ${DESKTOP_PATH}`)
-      let currentDesktopDirId = desktopDirId
-      if (!currentDesktopDirId) {
-        const dir = await getEntityByPath(DESKTOP_PATH)
-        if (dir && dir.type === 'directory') {
-          currentDesktopDirId = dir.id
-          setDesktopDirId(dir.id)
-        } else {
-          throw new Error("Desktop directory not found or is not a directory")
-        }
+      console.log(`[Desktop] Loading items for path: ${DESKTOP_PATH}`);
+      const dirEntity = await getEntityByPath(DESKTOP_PATH);
+
+      if (!dirEntity || dirEntity.type !== 'directory') {
+        throw new Error("Desktop directory not found or is not a directory.");
       }
-      if (!currentDesktopDirId) {
-        throw new Error("Desktop directory ID not found")
-      }
-      console.log(`[Desktop] Listing directory ID: ${currentDesktopDirId}`);
-      const items = await listDirectory(currentDesktopDirId);
-      console.log("[Desktop] Refreshed items:", items);
+
+      const currentDesktopId = dirEntity.id;
+      setDesktopId(currentDesktopId); // Set the desktop ID state
+      console.log(`[Desktop] Found Desktop directory ID: ${currentDesktopId}`);
+
+      const items = await listDirectory(currentDesktopId);
+      console.log("[Desktop] Loaded items:", items);
       setDesktopItems(items);
+
     } catch (error) {
-      console.error("Error loading/refreshing desktop items:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      showErrorDialog(`Could not load desktop items: ${errorMessage}`);
+      console.error("Error loading desktop items:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      showErrorDialog(`Could not load Desktop items: ${message}`);
+      setDesktopItems([]); // Clear items on error
+      setDesktopId(null);
     } finally {
       setIsLoading(false);
     }
-  }, [initialized, getEntityByPath, listDirectory, showErrorDialog, desktopDirId, fsVersion]);
+  }, [getEntityByPath, listDirectory, showErrorDialog, fsVersion]); // <-- Add fsVersion dependency
 
   useEffect(() => {
+    // Only load items if the file system is initialized
     if (initialized) {
-      refreshDesktopItems()
-    }
-  }, [initialized, refreshDesktopItems])
-
-  const debouncedSavePosition = useCallback(
-    debounce(async (id: string, x: number, y: number) => {
-      console.log(`[Desktop] Saving position for ${id}: (${x}, ${y})`)
-      const result = await updateEntityMetadata(id, { desktopX: x, desktopY: y })
-      if (!result.success) {
-        console.error("Failed to save icon position:", result.error)
-      }
-    }, 300),
-    [updateEntityMetadata]
-  )
-
-  const handleSavePosition = (id: string, x: number, y: number) => {
-    setDesktopItems(prevItems => 
-      prevItems.map(item => 
-        item.id === id ? { ...item, metadata: { ...item.metadata, desktopX: x, desktopY: y } } : item
-      )
-    )
-    debouncedSavePosition(id, x, y)
-  }
-
-  const handleCleanUpDesktop = useCallback(async () => {
-    if (!desktopDirId) return;
-    console.log("[Desktop] Cleaning up icons...");
-    try {
-      const updates = desktopItems.map(item => 
-        updateEntityMetadata(item.id, { desktopX: undefined, desktopY: undefined })
-      );
-      await Promise.all(updates);
-      // Positions will reset in DesktopIcon on next render due to undefined metadata
-      // Trigger a refresh to visually update layout if necessary (might depend on DesktopIcon logic)
-      refreshDesktopItems(); // Refresh to get potentially re-ordered items if sorting is added later
-    } catch (error) {
-      console.error("Error cleaning up desktop icons:", error);
-      showErrorDialog("Failed to clean up desktop icons.");
-    }
-  }, [desktopItems, updateEntityMetadata, refreshDesktopItems, desktopDirId, showErrorDialog]);
-
-  const handleCreateNewFolder = useCallback(async () => {
-    if (!desktopDirId) {
-      showErrorDialog("Cannot create folder: Desktop folder not loaded.");
-      return;
-    }
-    // TODO: Implement name collision handling (e.g., "Untitled Folder 2")
-    const result = await createDirectory("Untitled Folder", desktopDirId);
-    if (result.success) {
-      refreshDesktopItems();
+      console.log("[Desktop] FileSystem initialized, loading items.");
+      loadDesktopItems();
     } else {
-      console.error("Failed to create folder on desktop:", result.error);
-      showErrorDialog(result.error || "Failed to create folder.");
+      console.log("[Desktop] FileSystem not yet initialized, waiting...");
     }
-  }, [desktopDirId, createDirectory, refreshDesktopItems, showErrorDialog]);
+  }, [initialized, loadDesktopItems]); // Add initialized to dependency array
 
-  // --- Rename Handlers ---
-  const handleStartRename = useCallback((item: FileSystemEntity) => {
-    setRenamingItemId(item.id);
-    setRenamingItemName(item.name);
-  }, []);
+  // ... other handlers like handleStartRename, handleCancelRename, handleFinishRename ...
 
-  const handleCancelRename = useCallback(() => {
-    setRenamingItemId(null);
-    setRenamingItemName("");
-  }, []);
-
-  const handleConfirmRename = useCallback(async () => {
-    if (!renamingItemId || !renamingItemName.trim()) {
-      handleCancelRename(); // Cancel if name is empty
-      return;
-    }
-    
-    const originalItem = desktopItems.find(item => item.id === renamingItemId);
-    if (!originalItem || originalItem.name === renamingItemName.trim()) {
-        handleCancelRename(); // No change, just cancel
+  // Define handleCreateLink callback function - MODIFIED: Now receives type explicitly
+  const handleCreateLinkWithType = async (name: string, target: string, type: LinkTargetType) => {
+    if (!desktopId) {
+        showErrorDialog("Could not determine Desktop location.");
         return;
     }
-
-    console.log(`[Desktop] Renaming item ${renamingItemId} to "${renamingItemName.trim()}"`);
-    const result = await renameEntity(renamingItemId, renamingItemName.trim());
-    if (result.success) {
-      refreshDesktopItems(); // Refresh to show the new name
-    } else {
-      console.error("Failed to rename item:", result.error);
-      showErrorDialog(result.error || "Failed to rename item.");
+    try {
+        // createLink now uses the explicitly passed type
+        const result = await createLink(name, desktopId, type, target);
+        if (result.success) {
+            loadDesktopItems(); // Reload desktop items
+        } else {
+            showErrorDialog(result.error || "Failed to create link.");
+        }
+    } catch (error: any) {
+        showErrorDialog(`Error creating link: ${error.message}`);
     }
-    handleCancelRename(); // Clear state regardless of success/failure
-  }, [renamingItemId, renamingItemName, renameEntity, refreshDesktopItems, showErrorDialog, handleCancelRename, desktopItems]);
-
-  const handleItemDoubleClick = async (item: FileSystemEntity) => {
-    // Prevent double-click from triggering if renaming
-    if (renamingItemId === item.id) return;
-
-    console.log("[Desktop] Double click:", item)
-    if (item.type === "directory") {
-      openWindow({
-        title: "File Manager",
-        subtitle: item.name,
-        icon: "filemanager",
-        component: "FileManager",
-        position: { x: 100, y: 100, width: 700, height: 500 },
-        props: { initialPath: `${DESKTOP_PATH}/${item.name}` }
-      })
-    } else if (item.type === "file") {
-      openWindow({
-        title: "TextEdit",
-        subtitle: item.name,
-        icon: "textedit",
-        component: "Notepad",
-        position: { x: 150, y: 150, width: 500, height: 400 },
-        props: { fileId: item.id },
-      })
-    } else if (item.type === "link") {
-      const link = item as Link
-      switch (link.targetType) {
-        case "application":
-          const appInfo = getAppById(link.target)
-          if (appInfo) {
-            openWindow({
-              title: appInfo.name,
-              icon: appInfo.id,
-              component: appInfo.component,
-              position: { ...(appInfo.defaultSize || {width: 500, height: 400}), x: 120, y: 120 },
-              props: appInfo.defaultProps || {},
-            })
-          } else {
-            showErrorDialog(`Application not found: ${link.target}`)
-          }
-          break
-        case "directory":
-          try {
-            const targetPath = await getPath(link.target)
-            if (targetPath) {
-              openWindow({
-                title: "File Manager",
-                subtitle: targetPath,
-                icon: "filemanager",
-                component: "FileManager",
-                position: { x: 130, y: 130, width: 700, height: 500 },
-                props: { initialPath: targetPath }
-              })
-            } else {
-              showErrorDialog(`Could not resolve path for directory link target: ${link.target}`)
-            }
-          } catch (error) {
-            showErrorDialog(`Error resolving directory link.`)
-          }
-          break
-        case "file":
-          openWindow({
-            title: "TextEdit",
-            subtitle: link.name.replace(".lnk", ""),
-            icon: "textedit",
-            component: "Notepad",
-            position: { x: 140, y: 140, width: 500, height: 400 },
-            props: { fileId: link.target },
-          })
-          break
-        case "url":
-          openWindow({
-            title: "Browser",
-            subtitle: link.target,
-            icon: "browser",
-            component: "Browser",
-            position: { x: 150, y: 150, width: 800, height: 600 },
-            props: { initialUrl: link.target },
-          })
-          break
-      }
-    }
-  }
-
-  const handleDesktopContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
-    showContextMenu(e, [
-      { label: "New Folder", action: handleCreateNewFolder },
-      { label: "New Link...", submenu: [
-        { label: "Application Link...", action: () => handleCreateDesktopLink('application') },
-        { label: "Folder Link...", action: () => handleCreateDesktopLink('directory') },
-        { label: "File Link...", action: () => handleCreateDesktopLink('file') },
-        { label: "URL Link...", action: () => handleCreateDesktopLink('url') },
-      ]},
-      { separator: true },
-      { label: "Clean Up", action: handleCleanUpDesktop },
-      { separator: true },
-      { label: "Change Desktop Background...", action: () => console.log("TODO: Change BG") },
-      { separator: true },
-      { label: "Get Info", action: () => console.log("TODO: Get Desktop Info") },
-    ])
-  }
-
-  const handleCreateDesktopLink = (targetType: LinkTargetType) => {
-    if (!desktopDirId) {
-      console.error("Desktop directory ID not available yet.");
-      showErrorDialog("Cannot create link: Desktop folder not loaded.");
-      return;
-    }
-    
-    const parentId = desktopDirId; 
-
-    showCreateLinkDialog(targetType, async (name, target) => {
-      console.log(`Creating ${targetType} link named "${name}" pointing to "${target}" in Desktop (${parentId})`);
-      const result = await createLink(name, parentId, targetType, target);
-      if (result.success) {
-        refreshDesktopItems(); 
-      } else {
-        console.error("Failed to create link on desktop:", result.error);
-        showErrorDialog(result.error || "Failed to create link.");
-      }
-    });
   };
 
+  // Define handleCreateFolder function
+  const handleCreateFolder = async () => {
+      if (!desktopId) {
+          showErrorDialog("Could not determine Desktop location.");
+          return;
+      }
+      // Find a unique name
+      let folderName = "Untitled Folder";
+      let counter = 1;
+      const existingNames = new Set(desktopItems.map(item => item.name));
+      while (existingNames.has(folderName + (counter > 1 ? ` ${counter}` : ""))) {
+          counter++;
+      }
+      if (counter > 1) {
+          folderName = `${folderName} ${counter}`;
+      }
+
+      try {
+          const result = await createDirectory(folderName, desktopId);
+          if (result.success) {
+              loadDesktopItems();
+              // Optionally start renaming the new folder
+              // setRenamingItemId(result.data.id);
+              // setRenamingItemName(result.data.name);
+          } else {
+              showErrorDialog(result.error || "Failed to create folder.");
+          }
+      } catch (error: any) {
+          showErrorDialog(`Error creating folder: ${error.message}`);
+      }
+  };
+
+  // Define handleCleanUp function
+  const handleCleanUp = useCallback(async () => {
+     if (!desktopRef.current || desktopItems.length === 0) return;
+
+     const desktopRect = desktopRef.current.getBoundingClientRect();
+     const availableWidth = desktopRect.width - GRID_SIZE; // Leave some padding
+     const itemsPerRow = Math.max(1, Math.floor(availableWidth / GRID_SIZE));
+     
+     const updates = desktopItems.map((item, index) => {
+         const row = Math.floor(index / itemsPerRow);
+         const col = index % itemsPerRow;
+         const newX = col * GRID_SIZE + GRID_SIZE / 2; // Center in grid cell approx
+         const newY = row * GRID_SIZE + GRID_SIZE / 2;
+
+         // Only update if position actually changes, use correct keys
+         if (item.metadata?.desktopX !== newX || item.metadata?.desktopY !== newY) {
+             return updateEntityMetadata(item.id, { desktopX: newX, desktopY: newY }); // Use desktopX, desktopY
+         }
+         return Promise.resolve(); // No update needed
+     });
+
+     try {
+         await Promise.all(updates);
+         loadDesktopItems(); // Refresh positions visually
+     } catch (error) {
+         console.error("Error during clean up:", error);
+         showErrorDialog("An error occurred while cleaning up icons.");
+     }
+ }, [desktopItems, updateEntityMetadata, loadDesktopItems, showErrorDialog]);
+
+
+  // Handle background right-click
+  const handleBackgroundContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (renamingItemId) return;
+
+    showContextMenu(e, [
+      { label: "New Folder", action: handleCreateFolder }, // Use correct handler
+      {
+        label: "New Link...",
+        submenu: [
+          // Pass type explicitly in the callback to showCreateLinkDialog
+          { label: "Application Link...", action: () => showCreateLinkDialog('application', (name, target) => handleCreateLinkWithType(name, target, 'application')) }, 
+          { label: "Folder Link...", action: () => showCreateLinkDialog('directory', (name, target) => handleCreateLinkWithType(name, target, 'directory')) },
+          { label: "File Link...", action: () => showCreateLinkDialog('file', (name, target) => handleCreateLinkWithType(name, target, 'file')) }, 
+          { label: "URL Link...", action: () => showCreateLinkDialog('url', (name, target) => handleCreateLinkWithType(name, target, 'url')) },
+        ]
+      },
+      { separator: true }, 
+      { label: "Clean Up", action: handleCleanUp }, // Use correct handler
+    ]);
+  };
+
+  // Handle clicking outside icons (to cancel rename)
+  const handleClickOutsideIcon = (e: React.MouseEvent) => {
+      // If the click is directly on the desktop background (not an icon or input)
+      if (e.target === desktopRef.current && renamingItemId) {
+          handleFinishRename(); // Or handleCancelRename() depending on desired behavior
+      }
+  };
+
+   // Define handleItemDoubleClick/SingleClick - REPLACED with call to openEntity
+   // const handleItemClickAction = async (item: FileSystemEntity) => { ... }
+   // No longer needed as the logic is in useFileOpener
+
+   const handleFinishRename = async () => {
+    if (!renamingItemId || !renamingItemName) return;
+    const originalItem = desktopItems.find(item => item.id === renamingItemId);
+    if (!originalItem || originalItem.name === renamingItemName) {
+      // Name didn't change or item not found
+      setRenamingItemId(null);
+      setRenamingItemName("");
+      return;
+    }
+
+    try {
+      const result = await renameEntity(renamingItemId, renamingItemName);
+      if (!result.success) {
+        showErrorDialog(result.error || "Failed to rename item.");
+        // Optionally revert name in UI
+        setRenamingItemName(originalItem.name);
+      }
+      // Refresh desktop items whether rename succeeded or failed (to ensure UI consistency)
+      loadDesktopItems(); 
+    } catch (error: any) {
+      showErrorDialog(`Error renaming item: ${error.message}`);
+       setRenamingItemName(originalItem.name); // Revert on error
+    } finally {
+      setRenamingItemId(null);
+      setRenamingItemName("");
+    }
+  };
+
+  const handleSavePosition = useCallback(async (id: string, x: number, y: number) => {
+    // Basic debouncing or direct update
+    console.log(`[Desktop] Request to save position for ${id}: (${x}, ${y})`);
+    // Snap to grid before saving
+    const snappedX = Math.round(x / GRID_SIZE) * GRID_SIZE;
+    const snappedY = Math.round(y / GRID_SIZE) * GRID_SIZE;
+
+    // Update visual state immediately (optional, motion.div might handle it)
+    setDesktopItems(prev => prev.map(itm => 
+        itm.id === id ? { ...itm, metadata: { ...(itm.metadata || {}), desktopX: snappedX, desktopY: snappedY } } : itm
+    ));
+
+    try {
+        // Call file system to update metadata
+        const result = await updateEntityMetadata(id, { desktopX: snappedX, desktopY: snappedY });
+        if (!result.success) {
+            console.error(`Failed to save position for ${id}:`, result.error);
+            // Optionally show error or revert position
+            showErrorDialog(result.error || `Failed to save position for ${renamingItemName}.`);
+            loadDesktopItems(); // Revert visual state on error
+        }
+    } catch (error) {
+        console.error(`Error saving position for ${id}:`, error);
+        showErrorDialog(`Error saving position: ${error instanceof Error ? error.message : String(error)}`);
+        loadDesktopItems(); // Revert visual state on error
+    }
+  }, [updateEntityMetadata, showErrorDialog, loadDesktopItems, renamingItemName]); // Add dependencies
+
   return (
-    <div 
-      ref={desktopRef} 
-      className="flex-1 p-4 relative"
-      onContextMenu={handleDesktopContextMenu}
+    <div
+      ref={desktopRef}
+      className="flex-1 relative overflow-hidden select-none"
+      onContextMenu={handleBackgroundContextMenu} // Use correct handler
+      onClick={handleClickOutsideIcon} // Use correct handler
     >
-      {isLoading && <div className="text-white/50 text-center">Loading Desktop...</div>}
-      {!isLoading && desktopItems.map((item) => (
+      {/* Render the dynamic background */}
+      <DesktopBackgroundWrapper />
+
+      {desktopItems.map((item) => (
         <DesktopIcon
           key={item.id}
-          entity={item}
-          dragConstraintsRef={desktopRef}
-          onSavePosition={handleSavePosition}
-          onDoubleClick={handleItemDoubleClick}
-          // Rename props
+          entity={item} 
+          dragConstraintsRef={desktopRef} 
+          onSavePosition={handleSavePosition} 
+          // Correct rename props:
           isRenaming={renamingItemId === item.id}
-          currentName={renamingItemName}
-          onNameChange={(e) => setRenamingItemName(e.target.value)}
-          onConfirmRename={handleConfirmRename}
-          onCancelRename={handleCancelRename}
-          onStartRename={handleStartRename}
+          currentName={renamingItemId === item.id ? renamingItemName : item.name} 
+          onNameChange={(e) => setRenamingItemName(e.target.value)} 
+          onStartRename={(entityToRename) => { 
+              setRenamingItemId(entityToRename.id);
+              setRenamingItemName(entityToRename.name);
+          }}
+          onConfirmRename={handleFinishRename} 
+          onCancelRename={() => { 
+              setRenamingItemId(null);
+              setRenamingItemName("");
+          }}
+          onDoubleClick={() => openEntity(item)} // Call openEntity directly
         />
       ))}
+
+      {/* Drag overlay - Optional visual feedback */}
+      {/* ... */}
     </div>
-  )
+  );
 }

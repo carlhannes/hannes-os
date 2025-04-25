@@ -4,6 +4,7 @@ import type React from "react"
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react"
 import { FolderOpen, FileText, Globe, type LucideIcon, Settings } from "lucide-react"
+import path from 'path-browserify'; // Ensure path is imported
 
 export type AppInfo = {
   id: string
@@ -18,6 +19,7 @@ type AppContextType = {
   apps: AppInfo[]
   registerApp: (app: AppInfo) => void
   getAppById: (id: string) => AppInfo | undefined
+  getAppsForExtension: (filename: string) => AppInfo[]
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -56,6 +58,15 @@ export const DEFAULT_APPS: AppInfo[] = [
   },
 ]
 
+// --- Helper: Define which apps handle which extensions ---
+// TODO: Later, this could come from app registration or settings
+const EXTENSION_TO_APP_MAP: { [key: string]: string[] } = {
+    '.txt': ['textedit'],
+    '.md': ['textedit'],
+    '.html': ['browser', 'textedit'], // Can be opened by browser or editor
+    '.htm': ['browser', 'textedit'],
+};
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [apps, setApps] = useState<AppInfo[]>(DEFAULT_APPS)
 
@@ -76,13 +87,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [apps],
   )
 
+  // --- New Function: Get apps that can handle an extension ---
+  const getAppsForExtension = (filename: string): AppInfo[] => {
+    const extension = path.extname(filename).toLowerCase();
+    const appIds = EXTENSION_TO_APP_MAP[extension] || []; // Get registered apps or empty array
+    
+    const applicableApps = appIds
+        .map(id => getAppById(id))
+        .filter((app): app is AppInfo => app !== undefined); // Filter out undefined results
+
+    return applicableApps;
+  };
+
+  const contextValue = {
+    apps,
+    registerApp,
+    getAppById,
+    getAppsForExtension, // Expose the new function
+  }
+
   return (
     <AppContext.Provider
-      value={{
-        apps,
-        registerApp,
-        getAppById,
-      }}
+      value={contextValue}
     >
       {children}
     </AppContext.Provider>
