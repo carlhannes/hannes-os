@@ -7,12 +7,18 @@ import FileSaveDialog from "@/components/dialogs/file-save-dialog"
 import CreateLinkDialog from "./create-link-dialog"
 import EditLinkDialog from "./edit-link-dialog"
 import ErrorDialog from "./error-dialog"
-import type { LinkTargetType, Link } from "@/lib/file-system/types"
+import type { LinkTargetType, Link, FileSystemEntity } from "@/lib/file-system/types"
 
 type DialogType = "fileOpen" | "fileSave" | "createLink" | "editLink" | null
 
+// Define options for file open dialog
+interface FileOpenOptions {
+  initialPath?: string;
+  filter?: (entity: FileSystemEntity) => boolean; // Filter function
+}
+
 interface DialogContextType {
-  showFileOpenDialog: (onSelect: (fileId: string) => void, initialPath?: string) => void
+  showFileOpenDialog: (onSelect: (fileId: string | null) => void, options?: FileOpenOptions) => void
   showFileSaveDialog: (
     onSave: (path: string, fileName: string) => void,
     initialFileName?: string,
@@ -28,10 +34,11 @@ const DialogContext = createContext<DialogContextType | undefined>(undefined)
 
 export const DialogProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [dialogType, setDialogType] = useState<DialogType>(null)
-  const [fileOpenCallback, setFileOpenCallback] = useState<((fileId: string) => void) | null>(null)
+  const [fileOpenCallback, setFileOpenCallback] = useState<((fileId: string | null) => void) | null>(null)
   const [fileSaveCallback, setFileSaveCallback] = useState<((path: string, fileName: string) => void) | null>(null)
   const [initialPath, setInitialPath] = useState<string>("/")
   const [initialFileName, setInitialFileName] = useState<string>("")
+  const [fileOpenFilter, setFileOpenFilter] = useState<((entity: FileSystemEntity) => boolean) | undefined>(undefined);
 
   const [createLinkProps, setCreateLinkProps] = useState<{
     targetType: LinkTargetType;
@@ -45,11 +52,15 @@ export const DialogProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   const [errorDialogMessage, setErrorDialogMessage] = useState<string | null>(null);
 
-  const showFileOpenDialog = (onSelect: (fileId: string) => void, initialPath = "/") => {
-    setFileOpenCallback(() => onSelect)
-    setInitialPath(initialPath)
-    setDialogType("fileOpen")
-  }
+  const showFileOpenDialog = (
+    onSelect: (fileId: string | null) => void, 
+    options?: FileOpenOptions
+  ) => {
+    setFileOpenCallback(() => onSelect);
+    setInitialPath(options?.initialPath || "/");
+    setFileOpenFilter(() => options?.filter);
+    setDialogType("fileOpen");
+  };
 
   const showFileSaveDialog = (
     onSave: (path: string, fileName: string) => void,
@@ -70,19 +81,18 @@ export const DialogProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setDialogType(null)
     setFileOpenCallback(null)
     setFileSaveCallback(null)
+    setFileOpenFilter(undefined);
     setCreateLinkProps(null);
     setEditLinkProps(null);
     setErrorDialogMessage(null);
   }
 
-  const handleFileSelected = (entityId: string) => {
-    const calledFromCreateLink = !!createLinkProps; 
-    
+  const handleFileSelected = (entityId: string | null) => {
     if (fileOpenCallback) {
-      fileOpenCallback(entityId);
+        fileOpenCallback(entityId);
     }
-    
-    if (calledFromCreateLink) {
+    const calledFromCreateLink = !!createLinkProps;
+    if (calledFromCreateLink && entityId !== null) {
         setDialogType('createLink');
         setFileOpenCallback(null);
     } else {
@@ -147,8 +157,9 @@ export const DialogProvider: React.FC<{ children: ReactNode }> = ({ children }) 
          <div style={{ display: dialogType === 'fileOpen' ? 'block' : 'none' }}>
            <FileOpenDialog 
              initialPath={initialPath} 
-             onSelect={handleFileSelected} 
-             onCancel={hideDialog} 
+             onSelect={handleFileSelected}
+             onCancel={() => handleFileSelected(null)}
+             filter={fileOpenFilter}
            />
         </div>
       )}

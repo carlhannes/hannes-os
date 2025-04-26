@@ -9,9 +9,10 @@ interface FileOpenDialogProps {
   initialPath?: string
   onSelect: (entityId: string) => void
   onCancel: () => void
+  filter?: (entity: FileSystemEntity) => boolean
 }
 
-export default function FileOpenDialog({ initialPath = "/", onSelect, onCancel }: FileOpenDialogProps) {
+export default function FileOpenDialog({ initialPath = "/", onSelect, onCancel, filter }: FileOpenDialogProps) {
   const { initialized, getEntityByPath, listDirectory } = useFileSystem()
   const [currentDialogPath, setCurrentDialogPath] = useState(initialPath)
   const [dialogContents, setDialogContents] = useState<FileSystemEntity[]>([])
@@ -26,20 +27,22 @@ export default function FileOpenDialog({ initialPath = "/", onSelect, onCancel }
         const dir = await getEntityByPath(currentDialogPath);
         if (dir && dir.type === "directory") {
           const contents = await listDirectory(dir.id);
-          setDialogContents(contents);
+          const filteredContents = filter ? contents.filter(filter) : contents;
+          setDialogContents(filteredContents);
           setSelectedEntityId(null);
         } else {
-          setCurrentDialogPath("/");
+          setDialogContents([]);
+          setSelectedEntityId(null);
         }
       } catch (error) {
         console.error("Error loading dialog contents:", error);
-        setCurrentDialogPath("/");
+        setDialogContents([]);
       } finally {
         setIsLoading(false);
       }
     };
     loadContents();
-  }, [currentDialogPath, initialized, getEntityByPath, listDirectory]);
+  }, [currentDialogPath, initialized, getEntityByPath, listDirectory, filter]);
 
   const navigateDialogTo = (path: string) => {
     let targetPath = path.trim();

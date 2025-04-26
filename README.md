@@ -37,7 +37,8 @@ The goal is to provide a nostalgic yet functional desktop environment that runs 
 - **Menu Bar**: Classic Mac OS X menu bar with dropdown menus.
 - **File System**: Persistent virtual file system using IndexedDB.
   - Supports files, directories, and links.
-  - CRUD operations including **renaming** items.
+  - CRUD operations including **renaming** and **deleting** items.
+  - Default directories created: `/Applications`, `/Users/User`, `/Users/User/Desktop`, `/Users/User/Documents`, `/Users/User/Downloads`, `/Users/User/Pictures`.
   - **File System Links/Shortcuts**: Create `.lnk` files targeting applications, files, folders, or URLs. Default application links are automatically created in `/Applications`.
 - **Desktop**:
   - Displays file system items with draggable icons.
@@ -50,10 +51,13 @@ The goal is to provide a nostalgic yet functional desktop environment that runs 
   - Icon and List view modes.
   - **Inline renaming** of items via context menu.
   - Customizable sidebar with Favorites and System locations.
-- **TextEdit**: Simple text editor with open/save functionality.
-- **Browser**: Simple web browser component.
+- **TextEdit**: Simple text editor application.
+- **Browser**: Web browser capable of rendering external sites and local HTML files.
+- **ImageViewer**: Application to view common image file types (`.png`, `.jpg`, `.gif`, etc.).
+- **PhotoBooth**: Application to capture images from the webcam and save them to the file system.
 - **Context Menus**: Right-click context menus throughout the interface (Desktop background, Desktop icons, File Manager background, File Manager items, Links).
 - **File Dialogs**: Generic file open/save dialogs, create/edit link dialogs.
+  - `FileOpenDialog` now supports optional filtering of displayed files.
 - **Error Handling**: Basic visual error dialogs for common operations.
 - **System Preferences**: Application to manage system-wide settings like Dock appearance and behavior.
 - **Settings Persistence**: User settings are saved in the browser's localStorage.
@@ -134,6 +138,7 @@ The file system supports:
 - Directory navigation.
 - CRUD operations (create, read, update, delete, **rename**) for files/directories.
 - Link creation (`createLink`) and updating (`updateLink`).
+- Stores image data as Base64 data URLs within the standard `File` entity's `content` field.
 
 Example usage (within a component like FileManager):
 
@@ -171,7 +176,7 @@ const { showFileOpenDialog, showCreateLinkDialog, showErrorDialog } = useDialog(
 // Show file open dialog
 showFileOpenDialog((entityId) => {
   console.log("Selected entity:", entityId);
-}, "/Users/User/Documents");
+}, { initialPath: "/Users/User/Pictures", filter: (entity) => entity.type === 'file' });
 
 // Show create link dialog
 showCreateLinkDialog('url', (name, target) => {
@@ -273,16 +278,16 @@ The project includes several key UI components:
     - Captures thumbnail snapshots on minimize.
 - **File Manager** (`components/apps/file-manager.tsx`): File browser application (with local state).
     - Includes toolbar, editable path bar, sidebar, and content area (icon/list views).
-    - Handles navigation, item selection, creation, and renaming.
+    - Handles navigation (internal for folders, app opening for files/links), item selection, creation, and renaming.
 - **TextEdit** (`components/apps/notepad.tsx`): Simple text editor application.
 - **Browser** (`components/apps/browser.tsx`): Simple web browser application capable of rendering external websites and local HTML files from the virtual file system (`file:///` protocol).
+- **ImageViewer** (`components/apps/image-viewer.tsx`): Displays image files. Prompts user to select a file if opened directly.
+- **PhotoBooth** (`components/apps/photo-booth.tsx`): Captures webcam images and saves them to the Pictures folder.
 - **DropdownMenu** (`components/dropdown-menu.tsx`): Menu component for application menus (used by Menu Bar).
 - **Dialogs** (`components/dialogs/`):
-  - `FileOpenDialog`
+  - `FileOpenDialog` (supports optional filtering)
   - `FileSaveDialog`
   - `CreateLinkDialog`
-  - `EditLinkDialog`
-  - `ErrorDialog`
 - **System Preferences** (`components/apps/system-preferences.tsx`): Application for managing system settings.
   - Contains panes for different setting categories (e.g., Dock, Desktop).
 

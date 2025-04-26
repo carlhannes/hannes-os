@@ -2,14 +2,24 @@
 
 import type React from "react"
 import html2canvas from 'html2canvas';
+import dynamic from 'next/dynamic';
 
 import { useState, useRef, useEffect } from "react"
 import { useWindow, type WindowPosition } from "@/components/window-context"
 import { motion, AnimatePresence } from "framer-motion"
-import FileManager from "@/components/apps/file-manager"
-import Notepad from "@/components/apps/notepad"
-import Browser from "@/components/apps/browser"
-import SystemPreferences from "@/components/apps/system-preferences"
+import { X, Minus, Maximize2, Minimize2 } from "lucide-react"
+import { useApp } from "@/components/app-context"
+
+// Import components statically for type checking, but load dynamically
+import type FileManager from "@/components/apps/file-manager"
+import type Notepad from "@/components/apps/notepad"
+import type Browser from "@/components/apps/browser"
+import type SystemPreferences from "@/components/apps/system-preferences"
+// import type Terminal from "@/components/apps/terminal" // Temporarily removed
+import type ImageViewer from "@/components/apps/image-viewer"
+// Restore PhotoBooth static import for type checking
+import type PhotoBooth from "@/components/apps/photo-booth"
+// import type PhotoBooth from "@/components/apps/photo-booth" // Removed temporarily
 
 interface WindowProps {
   id: string
@@ -29,6 +39,48 @@ interface WindowProps {
   }
 }
 
+// Define props type for ImageViewer for casting
+interface ImageViewerProps {
+  fileId: string;
+}
+
+// Dynamically import application components
+const DynamicFileManager = dynamic(() => import('@/components/apps/file-manager'))
+const DynamicNotepad = dynamic(() => import('@/components/apps/notepad'))
+const DynamicBrowser = dynamic(() => import('@/components/apps/browser'))
+const DynamicSystemPreferences = dynamic(() => import('@/components/apps/system-preferences'))
+// const DynamicTerminal = dynamic(() => import('@/components/apps/terminal')) // Temporarily removed
+const DynamicImageViewer = dynamic(() => import('@/components/apps/image-viewer'))
+// Restore PhotoBooth dynamic import
+const DynamicPhotoBooth = dynamic(() => import('@/components/apps/photo-booth'))
+// const DynamicPhotoBooth = dynamic(() => import('@/components/apps/photo-booth')) // Removed temporarily
+
+// Function to render the correct component based on the window's app type
+const renderComponent = (componentName: string, componentProps: Record<string, any>) => {
+  switch (componentName) {
+    case "FileManager":
+      return <DynamicFileManager {...componentProps} />;
+    case "Notepad":
+      return <DynamicNotepad {...componentProps} />;
+    case "Browser":
+      return <DynamicBrowser {...componentProps} />;
+    case "SystemPreferences":
+      return <DynamicSystemPreferences {...componentProps} />;
+    // case "Terminal": // Temporarily removed
+    //   return <DynamicTerminal {...componentProps} />;
+    case "ImageViewer":
+        // Cast props to expected type to satisfy linter
+        return <DynamicImageViewer {...(componentProps as ImageViewerProps)} />;
+    // Restore PhotoBooth case
+    case "PhotoBooth": 
+        return <DynamicPhotoBooth {...componentProps} />;
+    // case "PhotoBooth": // Removed temporarily
+    //     return <DynamicPhotoBooth {...componentProps} />;
+    default:
+      return <div>Unknown Application: {componentName}</div>;
+  }
+};
+
 export default function Window({
   id,
   title,
@@ -40,7 +92,7 @@ export default function Window({
   isMaximized,
   zIndex,
   component,
-  props,
+  props = {},
   minimizeAnimation,
 }: WindowProps) {
   const {
@@ -198,9 +250,13 @@ export default function Window({
       case "FileManager":
         return "filemanager"
       case "Notepad":
-        return "textedit"
+        return "notepad"
       case "Browser":
         return "browser"
+      case "SystemPreferences":
+        return "systempreferences"
+      case "ImageViewer":
+        return "imageviewer"
       default:
         return componentName.toLowerCase()
     }
@@ -253,22 +309,6 @@ export default function Window({
       minimizeWindow(id, undefined, thumbnailUrl); // Pass undefined for position
     }
   };
-
-  // Render the appropriate component based on the component prop
-  const renderComponent = () => {
-    switch (component) {
-      case "FileManager":
-        return <FileManager {...props} />
-      case "Notepad":
-        return <Notepad {...props} />
-      case "Browser":
-        return <Browser {...props} />
-      case "SystemPreferences":
-        return <SystemPreferences {...props} />
-      default:
-        return <div>Unknown component: {component}</div>
-    }
-  }
 
   // Determine animation properties based on window state
   const getAnimationProps = () => {
@@ -387,7 +427,7 @@ export default function Window({
         </div>
 
         {/* Window content */}
-        <div ref={contentRef} className="flex-1 bg-white overflow-hidden">{renderComponent()}</div>
+        <div ref={contentRef} className="flex-1 bg-white overflow-hidden">{renderComponent(component, props)}</div>
 
         {/* Window resize handle */}
         <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10" onMouseDown={handleResizeMouseDown}>

@@ -106,6 +106,7 @@ class FileSystem {
       desktopDirId = desktopDirResult.data.id;
       
       await this.createDirectory("Downloads", userDirId); // Don't need its ID for now
+      await this.createDirectory("Pictures", userDirId); // Added Pictures directory
 
       // Create links in /Applications folder
       console.log("[FileSystem] Creating app links in /Applications:", appsDirId);
