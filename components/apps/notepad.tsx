@@ -19,7 +19,7 @@ export default function Notepad({ initialContent = "", fileId }: NotepadProps) {
   const [isModified, setIsModified] = useState(false)
   const [isLoading, setIsLoading] = useState(!!fileId)
   const [currentFileId, setCurrentFileId] = useState<string | undefined>(fileId)
-  const { getFile, updateFileContent, createFile, getPath } = useFileSystem()
+  const { getFile, updateFileContent, createFile, getPath, getEntityByPath } = useFileSystem()
   const { showFileOpenDialog, showFileSaveDialog } = useDialog()
 
   // Load file content if fileId is provided
@@ -72,14 +72,20 @@ export default function Notepad({ initialContent = "", fileId }: NotepadProps) {
     }
 
     showFileOpenDialog(async (fileId) => {
-      const file = await getFile(fileId)
-      if (file && file.type === "file") {
-        setContent((file as File).content)
-        setFileName(file.name)
-        setCurrentFileId(fileId)
-        setIsModified(false)
+      if (fileId) {
+        const file = await getFile(fileId)
+        if (file && file.type === "file") {
+          setContent((file as File).content)
+          setFileName(file.name)
+          setCurrentFileId(fileId)
+          setIsModified(false)
+        }
+      } else {
+        console.log("File open dialog cancelled or failed.")
       }
-    }, "/Users/User/Documents")
+    }, {
+      initialPath: "/Users/User/Documents",
+    })
   }
 
   // Save file
@@ -98,16 +104,22 @@ export default function Notepad({ initialContent = "", fileId }: NotepadProps) {
   const handleSaveAs = () => {
     showFileSaveDialog(
       async (path, newFileName) => {
-        // Create a new file
-        const result = await createFile(newFileName, content)
+        const parentEntity = await getEntityByPath(path)
+        if (!parentEntity || parentEntity.type !== 'directory') {
+          console.error("Save As: Invalid save path", path)
+          return
+        }
+        const result = await createFile(newFileName, parentEntity.id, content)
         if (result.success && result.data) {
           setFileName(result.data.name)
           setCurrentFileId(result.data.id)
           setIsModified(false)
+        } else {
+          console.error("Save As failed:", result.error)
         }
       },
       fileName,
-      "/Users/User/Documents",
+      "/Users/User/Documents"
     )
   }
 
